@@ -149,12 +149,15 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   timeScale: 1
-  particleCount: 30
-  particleRadius: 0.26
+  particleCount: 3000
+  particleRadius: 0.03
   temperature: 1
   boundsSize: {x: 17.36, y: 9.69}
   spawnerSize: {x: 6.86, y: 2.54}
   spawnerPosition: {x: -4.68, y: 2.97}
+  obstacles:
+  - position: {x: 4.39, y: 0}
+    size: {x: 0.93, y: 4.28}
   computeShader: {fileID: 7200000, guid: 0dbca7b6cce3bdc42b1506f1a07c2cb9, type: 3}
   particleShader: {fileID: 4800000, guid: ba36926b89743a044890f52df5629c76, type: 3}
 --- !u!4 &106965231
