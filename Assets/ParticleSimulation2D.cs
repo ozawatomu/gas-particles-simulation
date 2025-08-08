@@ -18,6 +18,9 @@ public class ParticleSimulation2D : MonoBehaviour
     public Vector2 spawnerSize;
     public Vector2 spawnerPosition;
 
+    [Range(1, 10)]
+    public int simulationSubsteps = 3;
+
     struct Particle
     {
         public Vector2 position;
@@ -34,7 +37,9 @@ public class ParticleSimulation2D : MonoBehaviour
     public Obstacle[] obstacles;
 
     // Computer shader fields
-    ComputeBuffer particleBuffer;
+    ComputeBuffer particleReadBuffer;
+    ComputeBuffer particleWriteBuffer;
+    ComputeBuffer obstacleBuffer;
     public ComputeShader computeShader;
     int kernelID;
     int groupSizeX;
@@ -82,12 +87,16 @@ public class ParticleSimulation2D : MonoBehaviour
     void SetupComputeShader(Particle[] particles)
     {
         int particleStride = (2 + 2) * sizeof(float);
-        particleBuffer = new ComputeBuffer(particleCount, particleStride);
-        particleBuffer.SetData(particles);
+        particleReadBuffer = new ComputeBuffer(particleCount, particleStride);
+        particleWriteBuffer = new ComputeBuffer(particleCount, particleStride);
+        particleReadBuffer.SetData(particles);
+
+        int obstacleStride = (2 + 2) * sizeof(float);
+        obstacleBuffer = new ComputeBuffer(obstacles.Length, obstacleStride);
+        obstacleBuffer.SetData(obstacles);
 
         kernelID = computeShader.FindKernel("CSParticleSimulation2D");
-        computeShader.SetBuffer(kernelID, "particleBuffer", particleBuffer);
-        computeShader.SetFloat("particleRadius", particleRadius);
+        computeShader.SetInt("particleCount", particleCount);
 
         uint threadsX;
         computeShader.GetKernelThreadGroupSizes(kernelID, out threadsX, out _, out _);
@@ -98,8 +107,6 @@ public class ParticleSimulation2D : MonoBehaviour
     {
         CreateQuadMesh();
         particleMaterial = new Material(particleShader);
-        particleMaterial.SetBuffer("_Particles", particleBuffer);
-        particleMaterial.SetFloat("_Radius", particleRadius);
         renderBounds = new Bounds(
             Vector3.zero,
             new Vector3(boundsSize.x + 10f, boundsSize.y + 10f, 100f)
@@ -109,12 +116,29 @@ public class ParticleSimulation2D : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        float adjustedDeltaTime = Time.deltaTime * timeScale;
-        computeShader.SetFloat("deltaTime", adjustedDeltaTime);
-        computeShader.SetFloat("temperature", temperature);
-        computeShader.SetVector("boundsSize", boundsSize);
-        computeShader.Dispatch(kernelID, groupSizeX, 1, 1);
+        float substepDeltaTime = (Time.deltaTime * timeScale) / simulationSubsteps;
 
+        computeShader.SetFloat("temperature", temperature);
+        computeShader.SetFloat("particleRadius", particleRadius);
+        computeShader.SetVector("boundsSize", boundsSize);
+        computeShader.SetInt("obstacleCount", obstacles.Length);
+        obstacleBuffer.SetData(obstacles);
+        computeShader.SetBuffer(kernelID, "obstacleBuffer", obstacleBuffer);
+
+        for (int simulationSubstep = 0; simulationSubstep < simulationSubsteps; simulationSubstep++)
+        {
+            computeShader.SetFloat("deltaTime", substepDeltaTime);
+            computeShader.SetBuffer(kernelID, "particleReadBuffer", particleReadBuffer);
+            computeShader.SetBuffer(kernelID, "particleWriteBuffer", particleWriteBuffer);
+            computeShader.Dispatch(kernelID, groupSizeX, 1, 1);
+
+            var tmp = particleReadBuffer;
+            particleReadBuffer = particleWriteBuffer;
+            particleWriteBuffer = tmp;
+        }
+
+        particleMaterial.SetBuffer("_Particles", particleReadBuffer);
+        particleMaterial.SetFloat("_Radius", particleRadius);
         Graphics.DrawMeshInstancedProcedural(
             quadMesh,
             0,
@@ -171,10 +195,20 @@ public class ParticleSimulation2D : MonoBehaviour
 
     void OnDisable()
     {
-        if (particleBuffer != null)
+        if (particleReadBuffer != null)
         {
-            particleBuffer.Release();
-            particleBuffer = null;
+            particleReadBuffer.Release();
+            particleReadBuffer = null;
+        }
+        if (particleWriteBuffer != null)
+        {
+            particleWriteBuffer.Release();
+            particleWriteBuffer = null;
+        }
+        if (obstacleBuffer != null)
+        {
+            obstacleBuffer.Release();
+            obstacleBuffer = null;
         }
     }
 }

@@ -149,12 +149,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   timeScale: 1
-  particleCount: 3000
-  particleRadius: 0.03
+  particleCount: 10000
+  particleRadius: 0.01
   temperature: 1
-  boundsSize: {x: 17.36, y: 9.69}
-  spawnerSize: {x: 6.86, y: 2.54}
-  spawnerPosition: {x: -4.68, y: 2.97}
+  boundsSize: {x: 17.7779, y: 10}
+  spawnerSize: {x: 16.98, y: 9.11}
+  spawnerPosition: {x: 0, y: 0}
+  simulationSubsteps: 3
   obstacles:
   - position: {x: 4.39, y: 0}
     size: {x: 0.93, y: 4.28}

@@ -1,30 +1,117 @@
 #pragma kernel CSParticleSimulation2D
 
+#define EPSILON 1e-6
+
 struct Particle{
     float2 position;
     float2 direction;
 };
-RWStructuredBuffer<Particle> particleBuffer;
-StructuredBuffer<Particle> obstacleBuffer;
+StructuredBuffer<Particle> particleReadBuffer;
+RWStructuredBuffer<Particle> particleWriteBuffer;
+struct Obstacle{
+    float2 position;
+    float2 size;
+};
+StructuredBuffer<Obstacle> obstacleBuffer;
+int particleCount;
+int obstacleCount;
 float particleRadius;
 float deltaTime;
 float temperature;
+float2 boundsSize;
 
-void HandleCollisions(uint particleI)
-{
-    Particle particle = particleBuffer[particleI];
+float2 NormalizeSafe(float2 vectorValue) {
+    float lengthValue = max(length(vectorValue), EPSILON);
+    return vectorValue / lengthValue;
+}
+
+float2 ApplyEqualMassElasticCollision(float2 selfVelocity, float2 otherVelocity, float2 collisionNormal) {
+    float normalComponent = dot(selfVelocity - otherVelocity, collisionNormal);
+    return selfVelocity - normalComponent * collisionNormal;
+}
+
+void ResolveParticleCollisions(
+    inout float2 selfPosition,
+    inout float2 selfDirection,
+    uint selfIndex
+) {
+    const float combinedRadius = 2.0 * particleRadius;
+    const float combinedRadiusSquared = combinedRadius * combinedRadius;
+    const float positionCorrectionFactor = 0.5;
+    const float velocityDampingFactor = 0.0;
+
+    float2 selfVelocity = selfDirection * temperature;
+
+    [loop]
+    for (uint otherIndex = 0; otherIndex < particleCount; ++otherIndex) {
+        if (otherIndex == selfIndex) continue;
+
+        float2 otherPosition = particleReadBuffer[otherIndex].position;
+        float2 positionDelta = selfPosition - otherPosition;
+        float   distanceSquared = dot(positionDelta, positionDelta);
+
+        if (distanceSquared < combinedRadiusSquared && distanceSquared > EPSILON) {
+            float  distance = sqrt(distanceSquared);
+            float2 collisionNormal = positionDelta / distance;
+            float  penetrationDepth = combinedRadius - distance;
+
+            float2 otherVelocity = particleReadBuffer[otherIndex].direction * temperature;
+
+            float relativeVelocityAlongNormal = dot(selfVelocity - otherVelocity, collisionNormal);
+            if (relativeVelocityAlongNormal < 0.0) {
+                selfPosition += collisionNormal * (penetrationDepth * positionCorrectionFactor);
+                selfVelocity = ApplyEqualMassElasticCollision(selfVelocity, otherVelocity, collisionNormal);
+                selfVelocity *= (1.0 - velocityDampingFactor);
+            }
+            else {
+                selfPosition += collisionNormal * (penetrationDepth * 0.25);
+            }
+        }
+    }
+
+    selfDirection = NormalizeSafe(selfVelocity);
+}
+
+void ResolveBoundaryCollisions(inout float2 position, inout float2 direction) {
+    float2 halfBoundsSize = boundsSize * 0.5;
+
+    if(position.x - particleRadius <= -halfBoundsSize.x){
+        position.x = -halfBoundsSize.x + particleRadius;
+        direction.x *= -1;
+    }
+
+    if(position.x + particleRadius >= halfBoundsSize.x){
+        position.x = halfBoundsSize.x - particleRadius;
+        direction.x *= -1;
+    }
+
+    if(position.y - particleRadius <= -halfBoundsSize.y){
+        position.y = -halfBoundsSize.y + particleRadius;
+        direction.y *= -1;
+    }
+
+    if(position.y + particleRadius >= halfBoundsSize.y){
+        position.y = halfBoundsSize.y - particleRadius;
+        direction.y *= -1;
+    }
 }
 
 [numthreads(256, 1, 1)]
 void CSParticleSimulation2D (uint3 id : SV_DispatchThreadID)
 {
     int particleI = id.x;
-    Particle particle = particleBuffer[particleI];
+    if (particleI >= particleCount) return;
 
-    float2 velocity = particle.direction * temperature;
-    particle.position += deltaTime * velocity;
+    Particle particle = particleReadBuffer[particleI];
 
-    particleBuffer[particleI] = particle;
+    float2 updatedDirection = particle.direction;
+    float2 velocity = updatedDirection * temperature;
+    float2 updatedPosition = particle.position + (deltaTime * velocity);
 
-    HandleCollisions(particleI);
+    ResolveParticleCollisions(updatedPosition, updatedDirection, particleI);
+    ResolveBoundaryCollisions(updatedPosition, updatedDirection);
+    
+    particle.position = updatedPosition;
+    particle.direction = updatedDirection;
+    particleWriteBuffer[particleI] = particle;
 }
