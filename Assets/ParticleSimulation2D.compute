@@ -1,0 +1,30 @@
+#pragma kernel CSParticleSimulation2D
+
+struct Particle{
+    float2 position;
+    float2 direction;
+};
+RWStructuredBuffer<Particle> particleBuffer;
+StructuredBuffer<Particle> obstacleBuffer;
+float particleRadius;
+float deltaTime;
+float temperature;
+
+void HandleCollisions(uint particleI)
+{
+    Particle particle = particleBuffer[particleI];
+}
+
+[numthreads(256, 1, 1)]
+void CSParticleSimulation2D (uint3 id : SV_DispatchThreadID)
+{
+    int particleI = id.x;
+    Particle particle = particleBuffer[particleI];
+
+    float2 velocity = particle.direction * temperature;
+    particle.position += deltaTime * velocity;
+
+    particleBuffer[particleI] = particle;
+
+    HandleCollisions(particleI);
+}
