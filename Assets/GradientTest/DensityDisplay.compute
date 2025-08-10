@@ -1,0 +1,59 @@
+#pragma kernel GenerateTexture
+
+RWTexture2D<float4> Result;
+StructuredBuffer<float2> particalPositionBuffer;
+int particleCount;
+float smoothingRadius;
+float mass;
+bool showDensities;
+
+float Map(float value, float fromMin, float fromMax, float toMin, float toMax)
+{
+    return toMin + (value - fromMin) * (toMax - toMin) / (fromMax - fromMin);
+}
+
+float SmoothingKernel(float radius, float distance)
+{
+    if (distance < radius)
+    {
+        float volume = 3.14159265359 * pow(radius, 5.0) / 10.0;
+        float value = radius - distance;
+        return (value * value * value) / volume;
+    }
+    return 0.0;
+}
+
+float4 GetPixelColor(float2 worldPosition){
+    float totalDensity = 0.0;
+    for(int particleI = 0; particleI < particleCount; particleI++){
+        float2 particlePosition = particalPositionBuffer[particleI];
+        float2 positionDelta = particlePosition - worldPosition;
+        float distanceSquared = dot(positionDelta, positionDelta);
+        float distance = sqrt(distanceSquared);
+        if(distance < smoothingRadius){
+            totalDensity = totalDensity + SmoothingKernel(smoothingRadius, distance);
+        }
+    }
+    float averageDensity = totalDensity*mass;
+
+    return float4(averageDensity, averageDensity, averageDensity, 0.0);
+}
+
+[numthreads(8,8,1)]
+void GenerateTexture (uint3 id : SV_DispatchThreadID)
+{
+    if(!showDensities){
+        Result[id.xy] = float4(0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    int pixelX = id.x;
+    int pixelY = id.y;
+
+    float worldX = Map(pixelX, 0.0, 1920.0, -19.2/2.0, 19.2/2.0);
+    float worldY = Map(pixelY, 0.0, 1080.0, -10.8/2.0, 10.8/2.0);
+
+    float2 worldPosition = float2(worldX, worldY);
+    
+    Result[id.xy] = GetPixelColor(worldPosition);
+}

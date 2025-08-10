@@ -1,0 +1,122 @@
+#pragma kernel CSParticleSimulation2D
+
+struct Particle {
+    float2 position;
+    float2 velocity;
+};
+
+StructuredBuffer<Particle> particleReadBuffer;
+RWStructuredBuffer<Particle> particleWriteBuffer;
+
+struct Obstacle {
+    float2 position;
+    float2 size;
+};
+
+StructuredBuffer<Obstacle> obstacleBuffer;
+
+int particleCount;
+int obstacleCount;
+float particleRadius;
+float deltaTime;
+float temperature;
+float2 boundsSize;
+
+// Tunables
+static const float kSlopPadding            = 1e-3;  // small extra radius to avoid edge jitter
+static const float kMinDistance            = 1e-6;  // avoid divide-by-zero
+static const float kPosCorrectionShare     = 0.5;   // move "self" by 50% of overlap
+static const float kSeparationBiasFraction = 0.25;  // outward velocity from penetration (Baumgarte-like)
+
+void ResolveParticleCollisions(
+    inout float2 selfPosition,   // position after free integration this substep
+    inout float2 selfVelocity,   // velocity to be updated by collisions
+    int          selfIndex
+){
+    const float combinedRadius       = 2.0 * particleRadius + kSlopPadding;
+    const float combinedRadiusSquared= combinedRadius * combinedRadius;
+
+    [loop]
+    for (int otherIndex = 0; otherIndex < particleCount; ++otherIndex)
+    {
+        if (otherIndex == selfIndex) continue;
+
+        // Read other's previous state (race-free snapshot)
+        Particle otherPrev = particleReadBuffer[otherIndex];
+
+        // Predict other's position to the same time as selfPosition
+        float2 otherPredictedPosition = otherPrev.position + deltaTime * otherPrev.velocity;
+        float2 otherVelocity          = otherPrev.velocity;
+
+        // Geometry in predicted space
+        float2 centerDelta   = selfPosition - otherPredictedPosition; // from other -> self
+        float  distanceSq    = dot(centerDelta, centerDelta);
+        if (distanceSq >= combinedRadiusSquared) continue;
+
+        float  distance      = max(sqrt(distanceSq), kMinDistance);
+        float2 collisionNormal = centerDelta / distance;              // unit normal
+        float  penetration   = combinedRadius - distance;
+
+        // Relative normal speed (only collide if approaching)
+        float  relativeNormalSpeed = dot(selfVelocity - otherVelocity, collisionNormal);
+        if (relativeNormalSpeed >= 0.0)
+        {
+            // Already separating: tiny positional nudge to avoid re-hit next step
+            selfPosition += collisionNormal * (penetration * 0.25);
+            continue;
+        }
+
+        // --- Positional correction (split overlap; we only move "self" in this thread) ---
+        selfPosition += collisionNormal * (penetration * kPosCorrectionShare);
+
+        // --- Perfectly elastic, equal-mass collision on the normal component ---
+        // v1' = v1 - ((v1 - v2)·n) * n
+        selfVelocity -= relativeNormalSpeed * collisionNormal;
+
+        // --- Separation bias (Baumgarte) to kill lingering interpenetration ---
+        float separationSpeed = (penetration / max(deltaTime, kMinDistance)) * kSeparationBiasFraction;
+        selfVelocity += collisionNormal * separationSpeed;
+    }
+}
+
+void ResolveBoundaryCollisions(inout float2 position, inout float2 velocity) {
+    float2 halfBoundsSize = boundsSize * 0.5;
+
+    if (position.x - particleRadius <= -halfBoundsSize.x) {
+        position.x = -halfBoundsSize.x + particleRadius;
+        velocity.x *= -1;
+    }
+
+    if (position.x + particleRadius >= halfBoundsSize.x) {
+        position.x = halfBoundsSize.x - particleRadius;
+        velocity.x *= -1;
+    }
+
+    if (position.y - particleRadius <= -halfBoundsSize.y) {
+        position.y = -halfBoundsSize.y + particleRadius;
+        velocity.y *= -1;
+    }
+
+    if (position.y + particleRadius >= halfBoundsSize.y) {
+        position.y = halfBoundsSize.y - particleRadius;
+        velocity.y *= -1;
+    }
+}
+
+[numthreads(256, 1, 1)]
+void CSParticleSimulation2D(uint3 id : SV_DispatchThreadID) {
+    int particleI = id.x;
+    if (particleI >= particleCount) return;
+
+    Particle particle = particleReadBuffer[particleI];
+
+    float2 updatedVelocity = particle.velocity;
+    float2 updatedPosition = particle.position + (deltaTime * updatedVelocity);
+
+    ResolveParticleCollisions(updatedPosition, updatedVelocity, particleI);
+    ResolveBoundaryCollisions(updatedPosition, updatedVelocity);
+
+    particle.position = updatedPosition;
+    particle.velocity = updatedVelocity;
+    particleWriteBuffer[particleI] = particle;
+}
