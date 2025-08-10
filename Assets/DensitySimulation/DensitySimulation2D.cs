@@ -20,6 +20,7 @@ public class DensitySimulation2D : MonoBehaviour
     [Header("References")]
     public ComputeShader computeShader;
     public Shader particleShader;
+    public GameObject canvasQuad;
 
     [Header("Simulation Settings")]
     [Min(0)]
@@ -41,6 +42,10 @@ public class DensitySimulation2D : MonoBehaviour
     [Range(0, 0.5f)]
     public float particleRadius = 0.05f;
     public Color particleColor = new Color(1f, 1f, 1f);
+    public Vector2Int canvasResolution = new Vector2Int(1920, 1080);
+
+    [Range(0, 1f)]
+    public float densityBrightnessMultiplier = 0.05f;
 
     // Compute shader fields
     ComputeBuffer particleBuffer;
@@ -50,11 +55,15 @@ public class DensitySimulation2D : MonoBehaviour
     int calculatePressureForcesKernel;
     int updateVelocitiesKernel;
     int updatePositionsKernel;
+    int generateCanvasTextureKernel;
 
     // Particle rendering fields
     Material particleMaterial;
     Mesh quadMesh;
     Bounds renderBounds;
+
+    // Canvas rendering fields
+    RenderTexture canvasRenderTexture;
 
     void Start()
     {
@@ -62,7 +71,8 @@ public class DensitySimulation2D : MonoBehaviour
         CreateBuffers();
         SetBuffers();
         SetInitialComputeShaderData();
-        SetRenderFields();
+        SetParticleRenderFields();
+        SetCanvasRenderFields();
     }
 
     void Update()
@@ -71,11 +81,25 @@ public class DensitySimulation2D : MonoBehaviour
         RenderParticles();
     }
 
+    void GetKernelIndices()
+    {
+        calculateDensitiesKernel = computeShader.FindKernel("CalculateDensities");
+        calculatePressureForcesKernel = computeShader.FindKernel("CalculatePressureForces");
+        updateVelocitiesKernel = computeShader.FindKernel("UpdateVelocities");
+        updatePositionsKernel = computeShader.FindKernel("UpdatePositions");
+        generateCanvasTextureKernel = computeShader.FindKernel("GenerateCanvasTexture");
+    }
+
     void CreateBuffers()
     {
         particleBuffer = ComputeHelper.CreateBuffer<Particle>(particleCount);
         densityBuffer = ComputeHelper.CreateBuffer<float>(particleCount);
         pressureForceBuffer = ComputeHelper.CreateBuffer<Vector2>(particleCount);
+        canvasRenderTexture = ComputeHelper.CreateRenderTexture(
+            canvasResolution.x,
+            canvasResolution.y,
+            0
+        );
     }
 
     void SetBuffers()
@@ -87,7 +111,8 @@ public class DensitySimulation2D : MonoBehaviour
             calculateDensitiesKernel,
             calculatePressureForcesKernel,
             updateVelocitiesKernel,
-            updatePositionsKernel
+            updatePositionsKernel,
+            generateCanvasTextureKernel
         );
         ComputeHelper.SetBuffer(
             computeShader,
@@ -102,6 +127,12 @@ public class DensitySimulation2D : MonoBehaviour
             "pressureForceBuffer",
             calculatePressureForcesKernel,
             updateVelocitiesKernel
+        );
+        ComputeHelper.SetTexture(
+            computeShader,
+            canvasRenderTexture,
+            "canvasRenderTexture",
+            generateCanvasTextureKernel
         );
     }
 
@@ -131,15 +162,7 @@ public class DensitySimulation2D : MonoBehaviour
         particleBuffer.SetData(initialParticles);
     }
 
-    void GetKernelIndices()
-    {
-        calculateDensitiesKernel = computeShader.FindKernel("CalculateDensities");
-        calculatePressureForcesKernel = computeShader.FindKernel("CalculatePressureForces");
-        updateVelocitiesKernel = computeShader.FindKernel("UpdateVelocities");
-        updatePositionsKernel = computeShader.FindKernel("UpdatePositions");
-    }
-
-    void SetRenderFields()
+    void SetParticleRenderFields()
     {
         // Setup quad mesh
         quadMesh = new Mesh();
@@ -169,6 +192,13 @@ public class DensitySimulation2D : MonoBehaviour
         renderBounds = new Bounds(Vector3.zero, new Vector3(boundsSize.x, boundsSize.y, 1f));
     }
 
+    void SetCanvasRenderFields()
+    {
+        Renderer quadRenderer = canvasQuad.GetComponent<Renderer>();
+        quadRenderer.enabled = true;
+        quadRenderer.material.SetTexture("_MainTex", canvasRenderTexture);
+    }
+
     void RunSimulationFrame(float frameDeltaTime)
     {
         float substepDeltaTime = frameDeltaTime / simulationSubsteps;
@@ -183,10 +213,19 @@ public class DensitySimulation2D : MonoBehaviour
         computeShader.SetFloat("deltaTime", substepDeltaTime);
         computeShader.SetFloat("smoothingRadius", smoothingRadius);
         computeShader.SetVector("boundsSize", boundsSize);
+        computeShader.SetInts("canvasResolution", canvasResolution.x, canvasResolution.y);
+        computeShader.SetFloat("densityBrightnessMultiplier", densityBrightnessMultiplier);
         ComputeHelper.Dispatch(computeShader, calculateDensitiesKernel, particleCount, 1, 1);
         ComputeHelper.Dispatch(computeShader, calculatePressureForcesKernel, particleCount, 1, 1);
         ComputeHelper.Dispatch(computeShader, updateVelocitiesKernel, particleCount, 1, 1);
         ComputeHelper.Dispatch(computeShader, updatePositionsKernel, particleCount, 1, 1);
+        ComputeHelper.Dispatch(
+            computeShader,
+            generateCanvasTextureKernel,
+            canvasResolution.x,
+            canvasResolution.y,
+            1
+        );
     }
 
     void RenderParticles()

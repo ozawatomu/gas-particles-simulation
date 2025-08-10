@@ -23,6 +23,14 @@ namespace Helpers
             return new ComputeBuffer(count, stride);
         }
 
+        public static RenderTexture CreateRenderTexture(int width, int height, int depth)
+        {
+            RenderTexture renderTexture = new RenderTexture(width, height, depth);
+            renderTexture.enableRandomWrite = true;
+            renderTexture.Create();
+            return renderTexture;
+        }
+
         public static int GetStride<T>()
         {
             return Marshal.SizeOf(typeof(T));
@@ -62,6 +70,19 @@ namespace Helpers
             for (int kernelI = 0; kernelI < kernelIndices.Length; kernelI++)
             {
                 computeShader.SetBuffer(kernelIndices[kernelI], nameID, buffer);
+            }
+        }
+
+        public static void SetTexture(
+            ComputeShader compute,
+            Texture texture,
+            string nameID,
+            params int[] kernelIndices
+        )
+        {
+            for (int kernelI = 0; kernelI < kernelIndices.Length; kernelI++)
+            {
+                compute.SetTexture(kernelIndices[kernelI], nameID, texture);
             }
         }
     }

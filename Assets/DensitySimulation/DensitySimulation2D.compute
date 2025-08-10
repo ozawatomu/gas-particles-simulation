@@ -2,6 +2,7 @@
 #pragma kernel CalculatePressureForces
 #pragma kernel UpdateVelocities
 #pragma kernel UpdatePositions
+#pragma kernel GenerateCanvasTexture
 
 struct Particle {
     float2 position;
@@ -12,9 +13,17 @@ int particleCount;
 RWStructuredBuffer<Particle> particleBuffer;
 RWStructuredBuffer<float> densityBuffer;
 RWStructuredBuffer<float2> pressureForceBuffer;
+RWTexture2D<float4> canvasRenderTexture;
 float deltaTime;
 float smoothingRadius;
+float densityBrightnessMultiplier;
 float2 boundsSize;
+int2 canvasResolution;
+
+float Map(float value, float fromMin, float fromMax, float toMin, float toMax)
+{
+    return toMin + (value - fromMin) * (toMax - toMin) / (fromMax - fromMin);
+}
 
 float SmoothingKernel(float radius, float distance)
 {
@@ -37,7 +46,8 @@ float SmoothingKernelDerivative(float radius, float distance)
     return 3.0 * pow(radius + distance, 2.0);
 }
 
-void HandleBoundaryCollisions(int particleI){
+void HandleBoundaryCollisions(int particleI)
+{
     float2 halfBoundsSize = boundsSize * 0.5;
 
     Particle particle = particleBuffer[particleI];
@@ -64,7 +74,8 @@ void HandleBoundaryCollisions(int particleI){
     particleBuffer[particleI] = particle;
 }
 
-void HandleCollisions(int particleI){
+void HandleCollisions(int particleI)
+{
     HandleBoundaryCollisions(particleI);
 }
 
@@ -131,9 +142,7 @@ void UpdateVelocities(uint3 id : SV_DispatchThreadID)
 
     Particle particle = particleBuffer[particleI];
     float2 pressureForce = pressureForceBuffer[particleI];
-
     particle.velocity += pressureForce * deltaTime;
-
     particleBuffer[particleI] = particle;
 }
 
@@ -144,10 +153,35 @@ void UpdatePositions(uint3 id : SV_DispatchThreadID)
     if (particleI >= particleCount) return;
 
     Particle particle = particleBuffer[particleI];
-
     particle.position += particle.velocity * deltaTime;
-
     particleBuffer[particleI] = particle;
-
     HandleCollisions(particleI);
+}
+
+[numthreads(8, 8, 1)]
+void GenerateCanvasTexture(uint3 id : SV_DispatchThreadID)
+{
+    int pixelX = id.x;
+    int pixelY = id.y;
+    int canvasResolutionX = canvasResolution.x;
+    int canvasResolutionY = canvasResolution.y;
+    float worldX = Map(pixelX, 0.0, canvasResolutionX, -19.2/2.0, 19.2/2.0);
+    float worldY = Map(pixelY, 0.0, canvasResolutionY, -10.8/2.0, 10.8/2.0);
+    float2 worldPosition = float2(worldX, worldY);
+
+    float totalDensity = 0.0;
+    for(int particleI = 0; particleI < particleCount; particleI++){
+        Particle particle = particleBuffer[particleI];
+        float2 particlePosition = particle.position;
+        float2 positionDelta = particlePosition - worldPosition;
+        float distanceSquared = dot(positionDelta, positionDelta);
+        float distance = sqrt(distanceSquared);
+        if(distance < smoothingRadius){
+            totalDensity = totalDensity + SmoothingKernel(smoothingRadius, distance);
+        }
+    };
+
+    float pixelBrightness = totalDensity * densityBrightnessMultiplier;
+
+    canvasRenderTexture[id.xy] = float4(pixelBrightness, pixelBrightness, pixelBrightness, 0.0);
 }
