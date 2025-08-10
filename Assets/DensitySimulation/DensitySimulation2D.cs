@@ -32,6 +32,9 @@ public class DensitySimulation2D : MonoBehaviour
     [Range(0f, 10f)]
     public float smoothingRadius = 1.2f;
 
+    [Range(0f, 1f)]
+    public float collisionDamping = 0.7f;
+
     [Header("Initial Settings")]
     [Min(0)]
     public int particleCount = 1000;
@@ -212,6 +215,7 @@ public class DensitySimulation2D : MonoBehaviour
     {
         computeShader.SetFloat("deltaTime", substepDeltaTime);
         computeShader.SetFloat("smoothingRadius", smoothingRadius);
+        computeShader.SetFloat("collisionDamping", collisionDamping);
         computeShader.SetVector("boundsSize", boundsSize);
         computeShader.SetInts("canvasResolution", canvasResolution.x, canvasResolution.y);
         computeShader.SetFloat("densityBrightnessMultiplier", densityBrightnessMultiplier);

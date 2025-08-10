@@ -16,6 +16,7 @@ RWStructuredBuffer<float2> pressureForceBuffer;
 RWTexture2D<float4> canvasRenderTexture;
 float deltaTime;
 float smoothingRadius;
+float collisionDamping;
 float densityBrightnessMultiplier;
 float2 boundsSize;
 int2 canvasResolution;
@@ -53,22 +54,22 @@ void HandleBoundaryCollisions(int particleI)
     Particle particle = particleBuffer[particleI];
     if (particle.position.x <= -halfBoundsSize.x) {
         particle.position.x = -halfBoundsSize.x;
-        particle.velocity.x *= -1;
+        particle.velocity.x *= -1 * collisionDamping;
     }
 
     if (particle.position.x >= halfBoundsSize.x) {
         particle.position.x = halfBoundsSize.x;
-        particle.velocity.x *= -1;
+        particle.velocity.x *= -1 * collisionDamping;
     }
 
     if (particle.position.y <= -halfBoundsSize.y) {
         particle.position.y = -halfBoundsSize.y;
-        particle.velocity.y *= -1;
+        particle.velocity.y *= -1 * collisionDamping;
     }
 
     if (particle.position.y >= halfBoundsSize.y) {
         particle.position.y = halfBoundsSize.y;
-        particle.velocity.y *= -1;
+        particle.velocity.y *= -1 * collisionDamping;
     }
 
     particleBuffer[particleI] = particle;
