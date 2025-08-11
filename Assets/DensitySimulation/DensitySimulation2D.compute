@@ -26,6 +26,7 @@ float2 boundsSize;
 int2 canvasResolution;
 float2 interactionPosition;
 float interactionStrength;
+float interactionRadius;
 bool isInteraction;
 
 float Map(float value, float fromMin, float fromMax, float toMin, float toMax)
@@ -163,12 +164,19 @@ void CalculateInteractionForces(uint3 id : SV_DispatchThreadID){
         return;
     };
 
-    float2 particlePredictedPosition = predictedParticlePositionBuffer[particleI];
-    float2 positionDelta = particlePredictedPosition - interactionPosition;
+    float2 particlePosition = particleBuffer[particleI].position;
+    float2 positionDelta = interactionPosition - particlePosition;
     float distanceSquared = dot(positionDelta, positionDelta);
-    float distance = sqrt(distanceSquared);
-    float2 positionDeltaNormalized = positionDelta / distance;
-    interactionForceBuffer[particleI] = positionDeltaNormalized * interactionStrength / distanceSquared;
+    if(distanceSquared < interactionRadius * interactionRadius){
+        float distance = sqrt(distanceSquared);
+        float ratioToCenter = distance / interactionRadius;
+        float ratioToEdge = 1 - ratioToCenter;
+        float2 directionToCenter = positionDelta / distance;
+
+        float2 interactionForce = directionToCenter * ratioToEdge * interactionStrength;
+        interactionForce -= particleBuffer[particleI].velocity;
+        interactionForceBuffer[particleI] = -interactionForce;
+    }
 }
 
 [numthreads(256, 1, 1)]

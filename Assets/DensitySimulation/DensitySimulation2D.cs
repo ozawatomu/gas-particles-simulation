@@ -43,6 +43,7 @@ public class DensitySimulation2D : MonoBehaviour
 
     [Header("Interaction Settings")]
     public float interactionStrength = 1f;
+    public float interactionRadius = 1f;
 
     [Header("Visual Settings")]
     public bool showDensities = true;
@@ -136,7 +137,8 @@ public class DensitySimulation2D : MonoBehaviour
             calculatePressureForcesKernel,
             updateVelocitiesKernel,
             updatePositionsKernel,
-            generateCanvasTextureKernel
+            generateCanvasTextureKernel,
+            calculateInteractionForcesKernel
         );
         ComputeHelper.SetBuffer(
             computeShader,
@@ -144,8 +146,7 @@ public class DensitySimulation2D : MonoBehaviour
             "predictedParticlePositionBuffer",
             calculatePredictedParticlePositionsKernel,
             calculateDensitiesKernel,
-            calculatePressureForcesKernel,
-            calculateInteractionForcesKernel
+            calculatePressureForcesKernel
         );
         ComputeHelper.SetBuffer(
             computeShader,
@@ -260,6 +261,7 @@ public class DensitySimulation2D : MonoBehaviour
 
         computeShader.SetVector("interactionPosition", mousePos);
         computeShader.SetFloat("interactionStrength", interactionStrength);
+        computeShader.SetFloat("interactionRadius", interactionRadius);
         computeShader.SetBool("isInteraction", isInteraction);
 
         for (int substepI = 0; substepI < simulationSubsteps; substepI++)
@@ -332,7 +334,7 @@ public class DensitySimulation2D : MonoBehaviour
             if (isInteracting)
             {
                 Gizmos.color = isPullInteraction ? Color.green : Color.red;
-                Gizmos.DrawWireSphere(mousePos, 1f);
+                Gizmos.DrawWireSphere(mousePos, interactionRadius);
             }
         }
     }
