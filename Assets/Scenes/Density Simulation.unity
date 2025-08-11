@@ -282,9 +282,11 @@ MonoBehaviour:
     size: {x: 16.89, y: 6.95}
   timeScale: 1
   simulationSubsteps: 3
-  smoothingRadius: 3
+  smoothingRadius: 2
   collisionDamping: 0.7
   interactionStrength: 1
+  showDensities: 0
+  showParticles: 1
   particleRadius: 0.04
   particleColor: {r: 1, g: 1, b: 1, a: 1}
   canvasResolution: {x: 1920, y: 1080}
@@ -326,7 +328,7 @@ Camera:
   m_Enabled: 1
   serializedVersion: 2
   m_ClearFlags: 2
-  m_BackGroundColor: {r: 0.09803922, g: 0.09803922, b: 0.09803922, a: 0}
+  m_BackGroundColor: {r: 0, g: 0, b: 0, a: 0}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
   m_FOVAxisMode: 0

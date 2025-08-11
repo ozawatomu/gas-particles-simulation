@@ -45,6 +45,9 @@ public class DensitySimulation2D : MonoBehaviour
     public float interactionStrength = 1f;
 
     [Header("Visual Settings")]
+    public bool showDensities = true;
+    public bool showParticles = true;
+
     [Range(0, 0.5f)]
     public float particleRadius = 0.05f;
     public Color particleColor = new Color(1f, 1f, 1f);
@@ -87,8 +90,12 @@ public class DensitySimulation2D : MonoBehaviour
 
     void Update()
     {
+        ApplyCanvasToggle();
         RunSimulationFrame(Time.deltaTime * timeScale);
-        RenderParticles();
+        if (showParticles)
+        {
+            RenderParticles();
+        }
     }
 
     void GetKernelIndices()
@@ -232,6 +239,11 @@ public class DensitySimulation2D : MonoBehaviour
         quadRenderer.material.SetTexture("_MainTex", canvasRenderTexture);
     }
 
+    void ApplyCanvasToggle()
+    {
+        canvasQuad.GetComponent<Renderer>().enabled = showDensities;
+    }
+
     void RunSimulationFrame(float frameDeltaTime)
     {
         float substepDeltaTime = frameDeltaTime / simulationSubsteps;
@@ -255,13 +267,16 @@ public class DensitySimulation2D : MonoBehaviour
             RunSimulationSubstep();
         }
 
-        ComputeHelper.Dispatch(
-            computeShader,
-            generateCanvasTextureKernel,
-            canvasResolution.x,
-            canvasResolution.y,
-            1
-        );
+        if (showDensities)
+        {
+            ComputeHelper.Dispatch(
+                computeShader,
+                generateCanvasTextureKernel,
+                canvasResolution.x,
+                canvasResolution.y,
+                1
+            );
+        }
     }
 
     void RunSimulationSubstep()
