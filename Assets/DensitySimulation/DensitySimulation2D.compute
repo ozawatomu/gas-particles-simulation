@@ -50,10 +50,7 @@ float SmoothingKernelDerivative(float radius, float distance)
     if (distance >= radius)
         return 0.0;
 
-    if (distance >= 0.0 && distance < radius)
-        return -3.0 * pow(radius - distance, 2.0);
-
-    return 3.0 * pow(radius + distance, 2.0);
+    return -(30.0 / (3.14159265 * pow(radius, 5))) * pow(radius - distance, 2);
 }
 
 void HandleBoundaryCollisions(int particleI)

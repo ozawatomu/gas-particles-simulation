@@ -231,10 +231,7 @@ public class GradientTest : ImmediateModeShapeDrawer
     {
         if (distance >= radius)
             return 0;
-        if (distance >= 0 && distance < radius)
-        {
-            return -3 * Mathf.Pow(radius - distance, 2);
-        }
-        return 3 * Mathf.Pow(radius + distance, 2);
+
+        return -(30f / (Mathf.PI * Mathf.Pow(radius, 5))) * Mathf.Pow(radius - distance, 2);
     }
 }
