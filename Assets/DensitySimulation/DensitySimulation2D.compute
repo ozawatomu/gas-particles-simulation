@@ -21,6 +21,7 @@ RWTexture2D<float4> canvasRenderTexture;
 float deltaTime;
 float smoothingRadius;
 float collisionDamping;
+float pressureMultiplier;
 float densityBrightnessMultiplier;
 float2 boundsSize;
 int2 canvasResolution;
@@ -58,8 +59,8 @@ float SmoothingKernelDerivative(float radius, float distance)
 void HandleBoundaryCollisions(int particleI)
 {
     float2 halfBoundsSize = boundsSize * 0.5;
-
     Particle particle = particleBuffer[particleI];
+
     if (particle.position.x <= -halfBoundsSize.x) {
         particle.position.x = -halfBoundsSize.x;
         particle.velocity.x *= -1 * collisionDamping;
@@ -109,14 +110,12 @@ void CalculateDensities(uint3 id : SV_DispatchThreadID)
     float density = 0;
     float smoothingRadiusSquared = smoothingRadius * smoothingRadius;
 
-    for (int otherParticleI = 0; otherParticleI < particleCount; otherParticleI++)
-    {
+    for (int otherParticleI = 0; otherParticleI < particleCount; otherParticleI++) {
         float2 otherParticlePredictedPosition = predictedParticlePositionBuffer[otherParticleI];
         float2 positionDelta = otherParticlePredictedPosition - selfParticlePredictedPosition;
         float distanceSquared = dot(positionDelta, positionDelta);
 
-        if (distanceSquared < smoothingRadiusSquared)
-        {
+        if (distanceSquared < smoothingRadiusSquared) {
             float distance = sqrt(distanceSquared);
             density += SmoothingKernel(smoothingRadius, distance);
         }
@@ -135,39 +134,39 @@ void CalculatePressureForces(uint3 id : SV_DispatchThreadID)
     float2 selfParticlePredictedPosition = predictedParticlePositionBuffer[selfParticleI];
     float smoothingRadiusSquared = smoothingRadius * smoothingRadius;
 
-    for (int otherParticleI = 0; otherParticleI < particleCount; otherParticleI++)
-    {
+    for (int otherParticleI = 0; otherParticleI < particleCount; otherParticleI++) {
         if (otherParticleI == selfParticleI) continue;
 
         float2 otherParticlePredictedPosition = predictedParticlePositionBuffer[otherParticleI];
         float2 positionDelta = otherParticlePredictedPosition - selfParticlePredictedPosition;
         float distanceSquared = dot(positionDelta, positionDelta);
 
-        if (distanceSquared < smoothingRadiusSquared)
-        {
+        if (distanceSquared < smoothingRadiusSquared) {
             float distance = sqrt(distanceSquared);
             float2 positionDeltaNormalized = positionDelta / distance;
             pressureForce += positionDeltaNormalized * SmoothingKernelDerivative(smoothingRadius, distance) / densityBuffer[otherParticleI];
         }
     }
 
-    pressureForceBuffer[selfParticleI] = pressureForce;
+    pressureForceBuffer[selfParticleI] = pressureForce * pressureMultiplier;
 }
 
 [numthreads(256, 1, 1)]
-void CalculateInteractionForces(uint3 id : SV_DispatchThreadID){
+void CalculateInteractionForces(uint3 id : SV_DispatchThreadID)
+{
     int particleI = id.x;
     if (particleI >= particleCount) return;
 
-    if(!isInteraction){
+    if (!isInteraction) {
         interactionForceBuffer[particleI] = float2(0.0, 0.0);
         return;
-    };
+    }
 
-    float2 particlePosition = particleBuffer[particleI].position;
-    float2 positionDelta = interactionPosition - particlePosition;
+    float2 predictedParticlePosition = predictedParticlePositionBuffer[particleI];
+    float2 positionDelta = interactionPosition - predictedParticlePosition;
     float distanceSquared = dot(positionDelta, positionDelta);
-    if(distanceSquared < interactionRadius * interactionRadius){
+
+    if (distanceSquared < interactionRadius * interactionRadius) {
         float distance = sqrt(distanceSquared);
         float ratioToCenter = distance / interactionRadius;
         float ratioToEdge = 1 - ratioToCenter;
@@ -188,10 +187,12 @@ void UpdateVelocities(uint3 id : SV_DispatchThreadID)
     Particle particle = particleBuffer[particleI];
 
     float2 pressureForce = pressureForceBuffer[particleI];
-    particle.velocity += pressureForce * deltaTime;
+    float2 pressureAcceleration = pressureForce / densityBuffer[particleI];
+    particle.velocity += pressureAcceleration * deltaTime;
 
     float2 interactionForce = interactionForceBuffer[particleI];
-    particle.velocity += interactionForce * deltaTime;
+    float2 interactionAcceleration = interactionForce / densityBuffer[particleI];
+    particle.velocity += interactionAcceleration * deltaTime;
 
     particleBuffer[particleI] = particle;
 }
@@ -215,23 +216,23 @@ void GenerateCanvasTexture(uint3 id : SV_DispatchThreadID)
     int pixelY = id.y;
     int canvasResolutionX = canvasResolution.x;
     int canvasResolutionY = canvasResolution.y;
-    float worldX = Map(pixelX, 0.0, canvasResolutionX, -19.2/2.0, 19.2/2.0);
-    float worldY = Map(pixelY, 0.0, canvasResolutionY, -10.8/2.0, 10.8/2.0);
+    float worldX = Map(pixelX, 0.0, canvasResolutionX, -19.2 / 2.0, 19.2 / 2.0);
+    float worldY = Map(pixelY, 0.0, canvasResolutionY, -10.8 / 2.0, 10.8 / 2.0);
     float2 worldPosition = float2(worldX, worldY);
 
     float totalDensity = 0.0;
-    for(int particleI = 0; particleI < particleCount; particleI++){
+    for (int particleI = 0; particleI < particleCount; particleI++) {
         Particle particle = particleBuffer[particleI];
         float2 particlePosition = particle.position;
         float2 positionDelta = particlePosition - worldPosition;
         float distanceSquared = dot(positionDelta, positionDelta);
         float distance = sqrt(distanceSquared);
-        if(distance < smoothingRadius){
-            totalDensity = totalDensity + SmoothingKernel(smoothingRadius, distance);
+
+        if (distance < smoothingRadius) {
+            totalDensity += SmoothingKernel(smoothingRadius, distance);
         }
-    };
+    }
 
     float pixelBrightness = totalDensity * densityBrightnessMultiplier;
-
     canvasRenderTexture[id.xy] = float4(pixelBrightness, pixelBrightness, pixelBrightness, 0.0);
 }

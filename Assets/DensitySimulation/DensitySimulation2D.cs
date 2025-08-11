@@ -37,6 +37,7 @@ public class DensitySimulation2D : MonoBehaviour
 
     [Range(0f, 10f)]
     public float smoothingRadius = 1.2f;
+    public float pressureMultiplier = 200f;
 
     [Range(0f, 1f)]
     public float collisionDamping = 0.7f;
@@ -146,14 +147,16 @@ public class DensitySimulation2D : MonoBehaviour
             "predictedParticlePositionBuffer",
             calculatePredictedParticlePositionsKernel,
             calculateDensitiesKernel,
-            calculatePressureForcesKernel
+            calculatePressureForcesKernel,
+            calculateInteractionForcesKernel
         );
         ComputeHelper.SetBuffer(
             computeShader,
             densityBuffer,
             "densityBuffer",
             calculateDensitiesKernel,
-            calculatePressureForcesKernel
+            calculatePressureForcesKernel,
+            updateVelocitiesKernel
         );
         ComputeHelper.SetBuffer(
             computeShader,
@@ -252,6 +255,7 @@ public class DensitySimulation2D : MonoBehaviour
         computeShader.SetFloat("deltaTime", substepDeltaTime);
         computeShader.SetFloat("smoothingRadius", smoothingRadius);
         computeShader.SetFloat("collisionDamping", collisionDamping);
+        computeShader.SetFloat("pressureMultiplier", pressureMultiplier);
         computeShader.SetVector("boundsSize", boundsSize);
         computeShader.SetInts("canvasResolution", canvasResolution.x, canvasResolution.y);
         computeShader.SetFloat("densityBrightnessMultiplier", densityBrightnessMultiplier);
@@ -341,12 +345,13 @@ public class DensitySimulation2D : MonoBehaviour
 
     void OnDestroy()
     {
-        ComputeHelper.ReleaseBuffers(
+        ComputeHelper.ReleaseComputeBuffers(
             particleBuffer,
             predictedParticlePositionBuffer,
             densityBuffer,
             pressureForceBuffer,
             interactionForceBuffer
         );
+        ComputeHelper.ReleaseRenderTextures(canvasRenderTexture);
     }
 }

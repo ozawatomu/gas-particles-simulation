@@ -5,7 +5,7 @@ namespace Tomu.Helpers
 {
     public static class ComputeHelper
     {
-        public static void ReleaseBuffers(params ComputeBuffer[] computeBuffers)
+        public static void ReleaseComputeBuffers(params ComputeBuffer[] computeBuffers)
         {
             for (int computeBufferI = 0; computeBufferI < computeBuffers.Length; computeBufferI++)
             {
@@ -13,6 +13,18 @@ namespace Tomu.Helpers
                 {
                     computeBuffers[computeBufferI].Release();
                     computeBuffers[computeBufferI] = null;
+                }
+            }
+        }
+
+        public static void ReleaseRenderTextures(params RenderTexture[] renderTextures)
+        {
+            for (int renderTextureI = 0; renderTextureI < renderTextures.Length; renderTextureI++)
+            {
+                if (renderTextures[renderTextureI] != null)
+                {
+                    renderTextures[renderTextureI].Release();
+                    renderTextures[renderTextureI] = null;
                 }
             }
         }
