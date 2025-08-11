@@ -275,15 +275,16 @@ MonoBehaviour:
   computeShader: {fileID: 7200000, guid: 21b4e45fa4ffd0d4aa8c6a2067fbe860, type: 3}
   particleShader: {fileID: 4800000, guid: 0821d206e84d2be47bac1fdc2c9d3f2e, type: 3}
   canvasQuad: {fileID: 1010931475}
-  timeScale: 1
-  simulationSubsteps: 3
-  smoothingRadius: 2.5
-  collisionDamping: 0.7
-  particleCount: 250
+  particleCount: 1000
   boundsSize: {x: 19.2, y: 10.8}
   spawner:
     position: {x: 0, y: 0}
-    size: {x: 10, y: 10}
+    size: {x: 16.89, y: 6.95}
+  timeScale: 1
+  simulationSubsteps: 3
+  smoothingRadius: 3
+  collisionDamping: 0.7
+  interactionStrength: 1
   particleRadius: 0.04
   particleColor: {r: 1, g: 1, b: 1, a: 1}
   canvasResolution: {x: 1920, y: 1080}

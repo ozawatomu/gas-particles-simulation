@@ -1,8 +1,10 @@
 #pragma kernel CalculateDensities
 #pragma kernel CalculatePressureForces
+#pragma kernel CalculateInteractionForces
 #pragma kernel UpdateVelocities
 #pragma kernel UpdatePositions
 #pragma kernel GenerateCanvasTexture
+#pragma kernel CalculatePredictedParticlePositions
 
 struct Particle {
     float2 position;
@@ -11,8 +13,10 @@ struct Particle {
 
 int particleCount;
 RWStructuredBuffer<Particle> particleBuffer;
+RWStructuredBuffer<float2> predictedParticlePositionBuffer;
 RWStructuredBuffer<float> densityBuffer;
 RWStructuredBuffer<float2> pressureForceBuffer;
+RWStructuredBuffer<float2> interactionForceBuffer;
 RWTexture2D<float4> canvasRenderTexture;
 float deltaTime;
 float smoothingRadius;
@@ -20,6 +24,9 @@ float collisionDamping;
 float densityBrightnessMultiplier;
 float2 boundsSize;
 int2 canvasResolution;
+float2 interactionPosition;
+float interactionStrength;
+bool isInteraction;
 
 float Map(float value, float fromMin, float fromMax, float toMin, float toMax)
 {
@@ -81,19 +88,30 @@ void HandleCollisions(int particleI)
 }
 
 [numthreads(256, 1, 1)]
+void CalculatePredictedParticlePositions(uint3 id : SV_DispatchThreadID)
+{
+    int particleI = id.x;
+    if (particleI >= particleCount) return;
+
+    Particle particle = particleBuffer[particleI];
+    float2 predictedPosition = particle.position + particle.velocity * 1.0 / 120.0;
+    predictedParticlePositionBuffer[particleI] = predictedPosition;
+}
+
+[numthreads(256, 1, 1)]
 void CalculateDensities(uint3 id : SV_DispatchThreadID)
 {
     int selfParticleI = id.x;
     if (selfParticleI >= particleCount) return;
 
-    Particle selfParticle = particleBuffer[selfParticleI];
+    float2 selfParticlePredictedPosition = predictedParticlePositionBuffer[selfParticleI];
     float density = 0;
     float smoothingRadiusSquared = smoothingRadius * smoothingRadius;
 
     for (int otherParticleI = 0; otherParticleI < particleCount; otherParticleI++)
     {
-        Particle otherParticle = particleBuffer[otherParticleI];
-        float2 positionDelta = otherParticle.position - selfParticle.position;
+        float2 otherParticlePredictedPosition = predictedParticlePositionBuffer[otherParticleI];
+        float2 positionDelta = otherParticlePredictedPosition - selfParticlePredictedPosition;
         float distanceSquared = dot(positionDelta, positionDelta);
 
         if (distanceSquared < smoothingRadiusSquared)
@@ -113,15 +131,15 @@ void CalculatePressureForces(uint3 id : SV_DispatchThreadID)
     if (selfParticleI >= particleCount) return;
 
     float2 pressureForce = float2(0.0, 0.0);
-    Particle selfParticle = particleBuffer[selfParticleI];
+    float2 selfParticlePredictedPosition = predictedParticlePositionBuffer[selfParticleI];
     float smoothingRadiusSquared = smoothingRadius * smoothingRadius;
 
     for (int otherParticleI = 0; otherParticleI < particleCount; otherParticleI++)
     {
         if (otherParticleI == selfParticleI) continue;
 
-        Particle otherParticle = particleBuffer[otherParticleI];
-        float2 positionDelta = otherParticle.position - selfParticle.position;
+        float2 otherParticlePredictedPosition = predictedParticlePositionBuffer[otherParticleI];
+        float2 positionDelta = otherParticlePredictedPosition - selfParticlePredictedPosition;
         float distanceSquared = dot(positionDelta, positionDelta);
 
         if (distanceSquared < smoothingRadiusSquared)
@@ -136,14 +154,37 @@ void CalculatePressureForces(uint3 id : SV_DispatchThreadID)
 }
 
 [numthreads(256, 1, 1)]
+void CalculateInteractionForces(uint3 id : SV_DispatchThreadID){
+    int particleI = id.x;
+    if (particleI >= particleCount) return;
+
+    if(!isInteraction){
+        interactionForceBuffer[particleI] = float2(0.0, 0.0);
+        return;
+    };
+
+    float2 particlePredictedPosition = predictedParticlePositionBuffer[particleI];
+    float2 positionDelta = particlePredictedPosition - interactionPosition;
+    float distanceSquared = dot(positionDelta, positionDelta);
+    float distance = sqrt(distanceSquared);
+    float2 positionDeltaNormalized = positionDelta / distance;
+    interactionForceBuffer[particleI] = positionDeltaNormalized * interactionStrength / distanceSquared;
+}
+
+[numthreads(256, 1, 1)]
 void UpdateVelocities(uint3 id : SV_DispatchThreadID)
 {
     int particleI = id.x;
     if (particleI >= particleCount) return;
 
     Particle particle = particleBuffer[particleI];
+
     float2 pressureForce = pressureForceBuffer[particleI];
     particle.velocity += pressureForce * deltaTime;
+
+    float2 interactionForce = interactionForceBuffer[particleI];
+    particle.velocity += interactionForce * deltaTime;
+
     particleBuffer[particleI] = particle;
 }
 

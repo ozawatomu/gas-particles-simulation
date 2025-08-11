@@ -1,5 +1,5 @@
 using System.Runtime.InteropServices;
-using Helpers;
+using Tomu.Helpers;
 using UnityEngine;
 
 public class DensitySimulation2D : MonoBehaviour
@@ -22,6 +22,12 @@ public class DensitySimulation2D : MonoBehaviour
     public Shader particleShader;
     public GameObject canvasQuad;
 
+    [Header("Initial Settings")]
+    [Min(0)]
+    public int particleCount = 1000;
+    public Vector2 boundsSize;
+    public Rectangle spawner;
+
     [Header("Simulation Settings")]
     [Min(0)]
     public float timeScale = 1;
@@ -35,11 +41,8 @@ public class DensitySimulation2D : MonoBehaviour
     [Range(0f, 1f)]
     public float collisionDamping = 0.7f;
 
-    [Header("Initial Settings")]
-    [Min(0)]
-    public int particleCount = 1000;
-    public Vector2 boundsSize;
-    public Rectangle spawner;
+    [Header("Interaction Settings")]
+    public float interactionStrength = 1f;
 
     [Header("Visual Settings")]
     [Range(0, 0.5f)]
@@ -52,10 +55,14 @@ public class DensitySimulation2D : MonoBehaviour
 
     // Compute shader fields
     ComputeBuffer particleBuffer;
+    ComputeBuffer predictedParticlePositionBuffer;
     ComputeBuffer densityBuffer;
     ComputeBuffer pressureForceBuffer;
+    ComputeBuffer interactionForceBuffer;
+    int calculatePredictedParticlePositionsKernel;
     int calculateDensitiesKernel;
     int calculatePressureForcesKernel;
+    int calculateInteractionForcesKernel;
     int updateVelocitiesKernel;
     int updatePositionsKernel;
     int generateCanvasTextureKernel;
@@ -86,8 +93,12 @@ public class DensitySimulation2D : MonoBehaviour
 
     void GetKernelIndices()
     {
+        calculatePredictedParticlePositionsKernel = computeShader.FindKernel(
+            "CalculatePredictedParticlePositions"
+        );
         calculateDensitiesKernel = computeShader.FindKernel("CalculateDensities");
         calculatePressureForcesKernel = computeShader.FindKernel("CalculatePressureForces");
+        calculateInteractionForcesKernel = computeShader.FindKernel("CalculateInteractionForces");
         updateVelocitiesKernel = computeShader.FindKernel("UpdateVelocities");
         updatePositionsKernel = computeShader.FindKernel("UpdatePositions");
         generateCanvasTextureKernel = computeShader.FindKernel("GenerateCanvasTexture");
@@ -96,8 +107,10 @@ public class DensitySimulation2D : MonoBehaviour
     void CreateBuffers()
     {
         particleBuffer = ComputeHelper.CreateBuffer<Particle>(particleCount);
+        predictedParticlePositionBuffer = ComputeHelper.CreateBuffer<Vector2>(particleCount);
         densityBuffer = ComputeHelper.CreateBuffer<float>(particleCount);
         pressureForceBuffer = ComputeHelper.CreateBuffer<Vector2>(particleCount);
+        interactionForceBuffer = ComputeHelper.CreateBuffer<Vector2>(particleCount);
         canvasRenderTexture = ComputeHelper.CreateRenderTexture(
             canvasResolution.x,
             canvasResolution.y,
@@ -111,11 +124,21 @@ public class DensitySimulation2D : MonoBehaviour
             computeShader,
             particleBuffer,
             "particleBuffer",
+            calculatePredictedParticlePositionsKernel,
             calculateDensitiesKernel,
             calculatePressureForcesKernel,
             updateVelocitiesKernel,
             updatePositionsKernel,
             generateCanvasTextureKernel
+        );
+        ComputeHelper.SetBuffer(
+            computeShader,
+            predictedParticlePositionBuffer,
+            "predictedParticlePositionBuffer",
+            calculatePredictedParticlePositionsKernel,
+            calculateDensitiesKernel,
+            calculatePressureForcesKernel,
+            calculateInteractionForcesKernel
         );
         ComputeHelper.SetBuffer(
             computeShader,
@@ -129,6 +152,13 @@ public class DensitySimulation2D : MonoBehaviour
             pressureForceBuffer,
             "pressureForceBuffer",
             calculatePressureForcesKernel,
+            updateVelocitiesKernel
+        );
+        ComputeHelper.SetBuffer(
+            computeShader,
+            interactionForceBuffer,
+            "interactionForceBuffer",
+            calculateInteractionForcesKernel,
             updateVelocitiesKernel
         );
         ComputeHelper.SetTexture(
@@ -205,24 +235,26 @@ public class DensitySimulation2D : MonoBehaviour
     void RunSimulationFrame(float frameDeltaTime)
     {
         float substepDeltaTime = frameDeltaTime / simulationSubsteps;
-        for (int substepI = 0; substepI < simulationSubsteps; substepI++)
-        {
-            RunSimulationSubstep(substepDeltaTime);
-        }
-    }
 
-    void RunSimulationSubstep(float substepDeltaTime)
-    {
         computeShader.SetFloat("deltaTime", substepDeltaTime);
         computeShader.SetFloat("smoothingRadius", smoothingRadius);
         computeShader.SetFloat("collisionDamping", collisionDamping);
         computeShader.SetVector("boundsSize", boundsSize);
         computeShader.SetInts("canvasResolution", canvasResolution.x, canvasResolution.y);
         computeShader.SetFloat("densityBrightnessMultiplier", densityBrightnessMultiplier);
-        ComputeHelper.Dispatch(computeShader, calculateDensitiesKernel, particleCount, 1, 1);
-        ComputeHelper.Dispatch(computeShader, calculatePressureForcesKernel, particleCount, 1, 1);
-        ComputeHelper.Dispatch(computeShader, updateVelocitiesKernel, particleCount, 1, 1);
-        ComputeHelper.Dispatch(computeShader, updatePositionsKernel, particleCount, 1, 1);
+
+        Vector2 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        bool isInteraction = Input.GetMouseButton(0);
+
+        computeShader.SetVector("interactionPosition", mousePos);
+        computeShader.SetFloat("interactionStrength", interactionStrength);
+        computeShader.SetBool("isInteraction", isInteraction);
+
+        for (int substepI = 0; substepI < simulationSubsteps; substepI++)
+        {
+            RunSimulationSubstep();
+        }
+
         ComputeHelper.Dispatch(
             computeShader,
             generateCanvasTextureKernel,
@@ -230,6 +262,28 @@ public class DensitySimulation2D : MonoBehaviour
             canvasResolution.y,
             1
         );
+    }
+
+    void RunSimulationSubstep()
+    {
+        ComputeHelper.Dispatch(
+            computeShader,
+            calculatePredictedParticlePositionsKernel,
+            particleCount,
+            1,
+            1
+        );
+        ComputeHelper.Dispatch(computeShader, calculateDensitiesKernel, particleCount, 1, 1);
+        ComputeHelper.Dispatch(computeShader, calculatePressureForcesKernel, particleCount, 1, 1);
+        ComputeHelper.Dispatch(
+            computeShader,
+            calculateInteractionForcesKernel,
+            particleCount,
+            1,
+            1
+        );
+        ComputeHelper.Dispatch(computeShader, updateVelocitiesKernel, particleCount, 1, 1);
+        ComputeHelper.Dispatch(computeShader, updatePositionsKernel, particleCount, 1, 1);
     }
 
     void RenderParticles()
@@ -253,10 +307,29 @@ public class DensitySimulation2D : MonoBehaviour
         Gizmos.color = new Color(0, 0, 1, 0.4f);
         Gizmos.DrawWireCube(spawner.position, spawner.size);
         Gizmos.color = new Color(1, 0, 0, 0.4f);
+
+        if (Application.isPlaying)
+        {
+            Vector2 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+            bool isPullInteraction = Input.GetMouseButton(0);
+            bool isPushInteraction = Input.GetMouseButton(1);
+            bool isInteracting = isPullInteraction || isPushInteraction;
+            if (isInteracting)
+            {
+                Gizmos.color = isPullInteraction ? Color.green : Color.red;
+                Gizmos.DrawWireSphere(mousePos, 1f);
+            }
+        }
     }
 
     void OnDestroy()
     {
-        ComputeHelper.ReleaseBuffers(particleBuffer, densityBuffer, pressureForceBuffer);
+        ComputeHelper.ReleaseBuffers(
+            particleBuffer,
+            predictedParticlePositionBuffer,
+            densityBuffer,
+            pressureForceBuffer,
+            interactionForceBuffer
+        );
     }
 }
