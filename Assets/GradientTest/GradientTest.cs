@@ -1,4 +1,5 @@
 using Shapes;
+using Tomu.SmoothingFunctions;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -218,20 +219,11 @@ public class GradientTest : ImmediateModeShapeDrawer
 
     float SmoothingKernel(float radius, float distance)
     {
-        if (distance < radius)
-        {
-            float volume = Mathf.PI * Mathf.Pow(radius, 5) / 10;
-            float value = radius - distance;
-            return value * value * value / volume;
-        }
-        return 0;
+        return SmoothingFunctions.SpikyPow2Kernel(radius, distance);
     }
 
     float SmoothingKernelDerivative(float radius, float distance)
     {
-        if (distance >= radius)
-            return 0;
-
-        return -(30f / (Mathf.PI * Mathf.Pow(radius, 5))) * Mathf.Pow(radius - distance, 2);
+        return SmoothingFunctions.SpikyPow2KernelDerivative(radius, distance);
     }
 }

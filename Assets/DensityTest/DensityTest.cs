@@ -1,4 +1,5 @@
 using Shapes;
+using Tomu.SmoothingFunctions;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -107,12 +108,6 @@ public class DensityTest : ImmediateModeShapeDrawer
 
     float SmoothingKernel(float radius, float distance)
     {
-        if (distance < radius)
-        {
-            float volume = Mathf.PI * Mathf.Pow(radius, 5) / 10;
-            float value = radius - distance;
-            return value * value * value / volume;
-        }
-        return 0;
+        return SmoothingFunctions.SpikyPow2Kernel(radius, distance);
     }
 }

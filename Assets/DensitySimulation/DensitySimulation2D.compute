@@ -6,6 +6,8 @@
 #pragma kernel GenerateCanvasTexture
 #pragma kernel CalculatePredictedParticlePositions
 
+#include "./SmoothingFunctions.hlsl"
+
 struct Particle {
     float2 position;
     float2 velocity;
@@ -28,7 +30,8 @@ int2 canvasResolution;
 float2 interactionPosition;
 float interactionStrength;
 float interactionRadius;
-bool isInteraction;
+bool isPullInteraction;
+bool isPushInteraction;
 
 float Map(float value, float fromMin, float fromMax, float toMin, float toMax)
 {
@@ -40,9 +43,7 @@ float SmoothingKernel(float radius, float distance)
     if (distance >= radius)
         return 0.0;
 
-    float volume = 3.14159265359 * pow(radius, 5.0) / 10.0;
-    float value = radius - distance;
-    return (value * value * value) / volume;
+    return SpikyPow2Kernel(radius, distance);
 }
 
 float SmoothingKernelDerivative(float radius, float distance)
@@ -50,7 +51,7 @@ float SmoothingKernelDerivative(float radius, float distance)
     if (distance >= radius)
         return 0.0;
 
-    return -(30.0 / (3.14159265 * pow(radius, 5))) * pow(radius - distance, 2);
+    return SpikyPow2KernelDerivative(radius, distance);
 }
 
 void HandleBoundaryCollisions(int particleI)
@@ -154,7 +155,7 @@ void CalculateInteractionForces(uint3 id : SV_DispatchThreadID)
     int particleI = id.x;
     if (particleI >= particleCount) return;
 
-    if (!isInteraction) {
+    if (!isPullInteraction && !isPushInteraction) {
         interactionForceBuffer[particleI] = float2(0.0, 0.0);
         return;
     }
@@ -171,7 +172,10 @@ void CalculateInteractionForces(uint3 id : SV_DispatchThreadID)
 
         float2 interactionForce = directionToCenter * ratioToEdge * interactionStrength;
         interactionForce -= particleBuffer[particleI].velocity;
-        interactionForceBuffer[particleI] = -interactionForce;
+        if (isPullInteraction) {
+            interactionForce *= -1;
+        }
+        interactionForceBuffer[particleI] = interactionForce;
     }
 }
 

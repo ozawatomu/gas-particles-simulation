@@ -261,12 +261,14 @@ public class DensitySimulation2D : MonoBehaviour
         computeShader.SetFloat("densityBrightnessMultiplier", densityBrightnessMultiplier);
 
         Vector2 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-        bool isInteraction = Input.GetMouseButton(0);
+        bool isPullInteraction = Input.GetMouseButton(0);
+        bool isPushInteraction = Input.GetMouseButton(1);
 
         computeShader.SetVector("interactionPosition", mousePos);
         computeShader.SetFloat("interactionStrength", interactionStrength);
         computeShader.SetFloat("interactionRadius", interactionRadius);
-        computeShader.SetBool("isInteraction", isInteraction);
+        computeShader.SetBool("isPullInteraction", isPullInteraction);
+        computeShader.SetBool("isPushInteraction", isPushInteraction);
 
         for (int substepI = 0; substepI < simulationSubsteps; substepI++)
         {
