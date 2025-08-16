@@ -1,21 +1,33 @@
+#pragma kernel CalculatePredictedParticlePositions
+#pragma kernel CalculateCellKeys
+#pragma kernel ReorderToTemp
+#pragma kernel CommitReorder
 #pragma kernel CalculateDensities
 #pragma kernel CalculatePressureForces
 #pragma kernel CalculateInteractionForces
 #pragma kernel UpdateVelocities
 #pragma kernel UpdatePositions
 #pragma kernel GenerateCanvasTexture
-#pragma kernel CalculatePredictedParticlePositions
 
 #include "./SmoothingFunctions.hlsl"
+#include "./SpatialPartitioning.hlsl"
 
 struct Particle {
     float2 position;
     float2 velocity;
 };
 
-int particleCount;
+uint particleCount;
 RWStructuredBuffer<Particle> particleBuffer;
 RWStructuredBuffer<float2> predictedParticlePositionBuffer;
+
+RWStructuredBuffer<Particle> tempParticleBuffer;
+RWStructuredBuffer<float2> tempPredictedParticlePositionBuffer;
+
+RWStructuredBuffer<uint> cellKeyBuffer;
+RWStructuredBuffer<uint> startIndexBuffer;
+StructuredBuffer<uint> sortedIndexBuffer;
+
 RWStructuredBuffer<float> densityBuffer;
 RWStructuredBuffer<float2> pressureForceBuffer;
 RWStructuredBuffer<float2> interactionForceBuffer;
@@ -87,10 +99,45 @@ void HandleCollisions(int particleI)
     HandleBoundaryCollisions(particleI);
 }
 
+float calculateDensity(float2 position)
+{
+    float density = 0;
+    float smoothingRadiusSquared = smoothingRadius * smoothingRadius;
+
+    int2 positionCellCoordinates = GetCellCoordinates(position, smoothingRadius);
+
+    for (int cellOffsetI = 0; cellOffsetI < 9; cellOffsetI++){
+        int2 offsetCellCoordinates = positionCellCoordinates + CELL_OFFSETS[cellOffsetI];
+        uint offsetCellHash = GetCellHash(offsetCellCoordinates);
+        uint offsetCellKey = GetCellKeyFromHash(offsetCellHash, particleCount);
+        uint currentParticleI = startIndexBuffer[offsetCellKey];
+
+        while(currentParticleI < particleCount){
+            uint otherParticleI = currentParticleI;
+            currentParticleI++;
+
+            uint otherParticleCellKey = cellKeyBuffer[otherParticleI];
+            if (otherParticleCellKey != offsetCellKey) break;
+
+            float2 otherParticlePosition = predictedParticlePositionBuffer[otherParticleI];
+
+            float2 positionDelta = otherParticlePosition - position;
+            float distanceSquared = dot(positionDelta, positionDelta);
+
+            if(distanceSquared >= smoothingRadiusSquared) continue;
+
+            float distance = sqrt(distanceSquared);
+            density += SmoothingKernel(smoothingRadius, distance);
+        }
+    }
+
+    return density;
+}
+
 [numthreads(256, 1, 1)]
 void CalculatePredictedParticlePositions(uint3 id : SV_DispatchThreadID)
 {
-    int particleI = id.x;
+    uint particleI = id.x;
     if (particleI >= particleCount) return;
 
     Particle particle = particleBuffer[particleI];
@@ -99,49 +146,85 @@ void CalculatePredictedParticlePositions(uint3 id : SV_DispatchThreadID)
 }
 
 [numthreads(256, 1, 1)]
+void CalculateCellKeys(uint3 id : SV_DispatchThreadID)
+{
+    uint particleI = id.x;
+    if (particleI >= particleCount) return;
+
+    Particle particle = particleBuffer[particleI];
+    float2 position = particle.position;
+    int2 cellCoordinates = GetCellCoordinates(position, smoothingRadius);
+    uint cellHash = GetCellHash(cellCoordinates);
+    uint cellKey = GetCellKeyFromHash(cellHash, particleCount);
+    cellKeyBuffer[particleI] = cellKey;
+}
+
+[numthreads(256, 1, 1)]
+void ReorderToTemp(uint3 id : SV_DispatchThreadID)
+{
+    uint particleI = id.x;
+    if (particleI >= particleCount) return;
+
+    uint sortedIndex = sortedIndexBuffer[particleI];
+    tempParticleBuffer[particleI] = particleBuffer[sortedIndex];
+    tempPredictedParticlePositionBuffer[particleI] = predictedParticlePositionBuffer[sortedIndex];
+}
+
+[numthreads(256, 1, 1)]
+void CommitReorder(uint3 id : SV_DispatchThreadID)
+{
+    uint particleI = id.x;
+    if (particleI >= particleCount) return;
+
+    particleBuffer[particleI] = tempParticleBuffer[particleI];
+    predictedParticlePositionBuffer[particleI] = tempPredictedParticlePositionBuffer[particleI];
+}
+
+[numthreads(256, 1, 1)]
 void CalculateDensities(uint3 id : SV_DispatchThreadID)
 {
-    int selfParticleI = id.x;
+    uint selfParticleI = id.x;
     if (selfParticleI >= particleCount) return;
 
     float2 selfParticlePredictedPosition = predictedParticlePositionBuffer[selfParticleI];
-    float density = 0;
-    float smoothingRadiusSquared = smoothingRadius * smoothingRadius;
 
-    for (int otherParticleI = 0; otherParticleI < particleCount; otherParticleI++) {
-        float2 otherParticlePredictedPosition = predictedParticlePositionBuffer[otherParticleI];
-        float2 positionDelta = otherParticlePredictedPosition - selfParticlePredictedPosition;
-        float distanceSquared = dot(positionDelta, positionDelta);
-
-        if (distanceSquared < smoothingRadiusSquared) {
-            float distance = sqrt(distanceSquared);
-            density += SmoothingKernel(smoothingRadius, distance);
-        }
-    }
-
-    densityBuffer[selfParticleI] = density;
+    densityBuffer[selfParticleI] = calculateDensity(selfParticlePredictedPosition);
 }
 
 [numthreads(256, 1, 1)]
 void CalculatePressureForces(uint3 id : SV_DispatchThreadID)
 {
-    int selfParticleI = id.x;
+    uint selfParticleI = id.x;
     if (selfParticleI >= particleCount) return;
 
     float2 pressureForce = float2(0.0, 0.0);
     float2 selfParticlePredictedPosition = predictedParticlePositionBuffer[selfParticleI];
     float smoothingRadiusSquared = smoothingRadius * smoothingRadius;
 
-    for (int otherParticleI = 0; otherParticleI < particleCount; otherParticleI++) {
-        if (otherParticleI == selfParticleI) continue;
+    int2 positionCellCoordinates = GetCellCoordinates(selfParticlePredictedPosition, smoothingRadius);
+    for (int cellOffsetI = 0; cellOffsetI < 9; cellOffsetI++){
+        int2 offsetCellCoordinates = positionCellCoordinates + CELL_OFFSETS[cellOffsetI];
+        uint offsetCellHash = GetCellHash(offsetCellCoordinates);
+        uint offsetCellKey = GetCellKeyFromHash(offsetCellHash, particleCount);
+        uint currentParticleI = startIndexBuffer[offsetCellKey];
 
-        float2 otherParticlePredictedPosition = predictedParticlePositionBuffer[otherParticleI];
-        float2 positionDelta = otherParticlePredictedPosition - selfParticlePredictedPosition;
-        float distanceSquared = dot(positionDelta, positionDelta);
+        while(currentParticleI < particleCount){
+            uint otherParticleI = currentParticleI;
+            currentParticleI++;
 
-        if (distanceSquared < smoothingRadiusSquared) {
+            if (otherParticleI == selfParticleI) continue;
+
+            uint otherParticleCellKey = cellKeyBuffer[otherParticleI];
+            if (otherParticleCellKey != offsetCellKey) break;
+
+            float2 otherParticlePredictedPosition = predictedParticlePositionBuffer[otherParticleI];
+            float2 positionDelta = otherParticlePredictedPosition - selfParticlePredictedPosition;
+            float distanceSquared = dot(positionDelta, positionDelta);
+
+            if(distanceSquared >= smoothingRadiusSquared) continue;
+
             float distance = sqrt(distanceSquared);
-            float2 positionDeltaNormalized = positionDelta / distance;
+            float2 positionDeltaNormalized = distance > 0 ? positionDelta / distance : float2(0.0, 1.0);
             pressureForce += positionDeltaNormalized * SmoothingKernelDerivative(smoothingRadius, distance) / densityBuffer[otherParticleI];
         }
     }
@@ -152,7 +235,7 @@ void CalculatePressureForces(uint3 id : SV_DispatchThreadID)
 [numthreads(256, 1, 1)]
 void CalculateInteractionForces(uint3 id : SV_DispatchThreadID)
 {
-    int particleI = id.x;
+    uint particleI = id.x;
     if (particleI >= particleCount) return;
 
     if (!isPullInteraction && !isPushInteraction) {
@@ -182,7 +265,7 @@ void CalculateInteractionForces(uint3 id : SV_DispatchThreadID)
 [numthreads(256, 1, 1)]
 void UpdateVelocities(uint3 id : SV_DispatchThreadID)
 {
-    int particleI = id.x;
+    uint particleI = id.x;
     if (particleI >= particleCount) return;
 
     Particle particle = particleBuffer[particleI];
@@ -201,7 +284,7 @@ void UpdateVelocities(uint3 id : SV_DispatchThreadID)
 [numthreads(256, 1, 1)]
 void UpdatePositions(uint3 id : SV_DispatchThreadID)
 {
-    int particleI = id.x;
+    uint particleI = id.x;
     if (particleI >= particleCount) return;
 
     Particle particle = particleBuffer[particleI];
@@ -213,26 +296,15 @@ void UpdatePositions(uint3 id : SV_DispatchThreadID)
 [numthreads(8, 8, 1)]
 void GenerateCanvasTexture(uint3 id : SV_DispatchThreadID)
 {
-    int pixelX = id.x;
-    int pixelY = id.y;
+    uint pixelX = id.x;
+    uint pixelY = id.y;
     int canvasResolutionX = canvasResolution.x;
     int canvasResolutionY = canvasResolution.y;
     float worldX = Map(pixelX, 0.0, canvasResolutionX, -19.2 / 2.0, 19.2 / 2.0);
     float worldY = Map(pixelY, 0.0, canvasResolutionY, -10.8 / 2.0, 10.8 / 2.0);
     float2 worldPosition = float2(worldX, worldY);
 
-    float totalDensity = 0.0;
-    for (int particleI = 0; particleI < particleCount; particleI++) {
-        Particle particle = particleBuffer[particleI];
-        float2 particlePosition = particle.position;
-        float2 positionDelta = particlePosition - worldPosition;
-        float distanceSquared = dot(positionDelta, positionDelta);
-        float distance = sqrt(distanceSquared);
-
-        if (distance < smoothingRadius) {
-            totalDensity += SmoothingKernel(smoothingRadius, distance);
-        }
-    }
+    float totalDensity = calculateDensity(worldPosition);
 
     float pixelBrightness = totalDensity * densityBrightnessMultiplier;
     canvasRenderTexture[id.xy] = float4(pixelBrightness, pixelBrightness, pixelBrightness, 0.0);

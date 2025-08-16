@@ -73,8 +73,8 @@ public class SpatialPartitioningTest : ImmediateModeShapeDrawer
 
     void UpdateSpatialLookup()
     {
-        spatialLookup = new (int, uint)[particleCount];
-        startIndices = new int[particleCount];
+        spatialLookup = new (int, uint)[particleCount]; // (particleI, cellKey) pairs
+        startIndices = new int[particleCount]; // Start index for spatial lookup for each cell key
         for (int particleI = 0; particleI < particlePositions.Length; particleI++)
         {
             Vector2 position = particlePositions[particleI];

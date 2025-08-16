@@ -61,10 +61,16 @@ public class DensitySimulation2D : MonoBehaviour
     // Compute shader fields
     ComputeBuffer particleBuffer;
     ComputeBuffer predictedParticlePositionBuffer;
+    ComputeBuffer tempParticleBuffer;
+    ComputeBuffer tempPredictedParticlePositionBuffer;
     ComputeBuffer densityBuffer;
     ComputeBuffer pressureForceBuffer;
     ComputeBuffer interactionForceBuffer;
+    Seb.Helpers.SpatialHash spatialHash; // Sebastian Lague's SpatialHash implementation
     int calculatePredictedParticlePositionsKernel;
+    int calculateCellKeysKernel;
+    int reorderToTempKernel;
+    int commitReorderKernel;
     int calculateDensitiesKernel;
     int calculatePressureForcesKernel;
     int calculateInteractionForcesKernel;
@@ -82,6 +88,7 @@ public class DensitySimulation2D : MonoBehaviour
 
     void Start()
     {
+        spatialHash = new Seb.Helpers.SpatialHash(particleCount);
         GetKernelIndices();
         CreateBuffers();
         SetBuffers();
@@ -105,6 +112,9 @@ public class DensitySimulation2D : MonoBehaviour
         calculatePredictedParticlePositionsKernel = computeShader.FindKernel(
             "CalculatePredictedParticlePositions"
         );
+        calculateCellKeysKernel = computeShader.FindKernel("CalculateCellKeys");
+        reorderToTempKernel = computeShader.FindKernel("ReorderToTemp");
+        commitReorderKernel = computeShader.FindKernel("CommitReorder");
         calculateDensitiesKernel = computeShader.FindKernel("CalculateDensities");
         calculatePressureForcesKernel = computeShader.FindKernel("CalculatePressureForces");
         calculateInteractionForcesKernel = computeShader.FindKernel("CalculateInteractionForces");
@@ -117,6 +127,8 @@ public class DensitySimulation2D : MonoBehaviour
     {
         particleBuffer = ComputeHelper.CreateBuffer<Particle>(particleCount);
         predictedParticlePositionBuffer = ComputeHelper.CreateBuffer<Vector2>(particleCount);
+        tempParticleBuffer = ComputeHelper.CreateBuffer<Particle>(particleCount);
+        tempPredictedParticlePositionBuffer = ComputeHelper.CreateBuffer<Vector2>(particleCount);
         densityBuffer = ComputeHelper.CreateBuffer<float>(particleCount);
         pressureForceBuffer = ComputeHelper.CreateBuffer<Vector2>(particleCount);
         interactionForceBuffer = ComputeHelper.CreateBuffer<Vector2>(particleCount);
@@ -139,7 +151,10 @@ public class DensitySimulation2D : MonoBehaviour
             updateVelocitiesKernel,
             updatePositionsKernel,
             generateCanvasTextureKernel,
-            calculateInteractionForcesKernel
+            calculateInteractionForcesKernel,
+            calculateCellKeysKernel,
+            reorderToTempKernel,
+            commitReorderKernel
         );
         ComputeHelper.SetBuffer(
             computeShader,
@@ -148,7 +163,24 @@ public class DensitySimulation2D : MonoBehaviour
             calculatePredictedParticlePositionsKernel,
             calculateDensitiesKernel,
             calculatePressureForcesKernel,
-            calculateInteractionForcesKernel
+            calculateInteractionForcesKernel,
+            reorderToTempKernel,
+            commitReorderKernel,
+            generateCanvasTextureKernel
+        );
+        ComputeHelper.SetBuffer(
+            computeShader,
+            tempParticleBuffer,
+            "tempParticleBuffer",
+            reorderToTempKernel,
+            commitReorderKernel
+        );
+        ComputeHelper.SetBuffer(
+            computeShader,
+            tempPredictedParticlePositionBuffer,
+            "tempPredictedParticlePositionBuffer",
+            reorderToTempKernel,
+            commitReorderKernel
         );
         ComputeHelper.SetBuffer(
             computeShader,
@@ -171,6 +203,29 @@ public class DensitySimulation2D : MonoBehaviour
             "interactionForceBuffer",
             calculateInteractionForcesKernel,
             updateVelocitiesKernel
+        );
+        ComputeHelper.SetBuffer(
+            computeShader,
+            spatialHash.SpatialKeys,
+            "cellKeyBuffer",
+            calculateCellKeysKernel,
+            calculateDensitiesKernel,
+            calculatePressureForcesKernel,
+            generateCanvasTextureKernel
+        );
+        ComputeHelper.SetBuffer(
+            computeShader,
+            spatialHash.SpatialOffsets,
+            "startIndexBuffer",
+            calculateDensitiesKernel,
+            calculatePressureForcesKernel,
+            generateCanvasTextureKernel
+        );
+        ComputeHelper.SetBuffer(
+            computeShader,
+            spatialHash.SpatialIndices,
+            "sortedIndexBuffer",
+            reorderToTempKernel
         );
         ComputeHelper.SetTexture(
             computeShader,
@@ -296,6 +351,12 @@ public class DensitySimulation2D : MonoBehaviour
             1,
             1
         );
+
+        ComputeHelper.Dispatch(computeShader, calculateCellKeysKernel, particleCount, 1, 1);
+        spatialHash.Run();
+        ComputeHelper.Dispatch(computeShader, reorderToTempKernel, particleCount, 1, 1);
+        ComputeHelper.Dispatch(computeShader, commitReorderKernel, particleCount, 1, 1);
+
         ComputeHelper.Dispatch(computeShader, calculateDensitiesKernel, particleCount, 1, 1);
         ComputeHelper.Dispatch(computeShader, calculatePressureForcesKernel, particleCount, 1, 1);
         ComputeHelper.Dispatch(
@@ -350,10 +411,13 @@ public class DensitySimulation2D : MonoBehaviour
         ComputeHelper.ReleaseComputeBuffers(
             particleBuffer,
             predictedParticlePositionBuffer,
+            tempParticleBuffer,
+            tempPredictedParticlePositionBuffer,
             densityBuffer,
             pressureForceBuffer,
             interactionForceBuffer
         );
+        spatialHash.Release();
         ComputeHelper.ReleaseRenderTextures(canvasRenderTexture);
     }
 }
